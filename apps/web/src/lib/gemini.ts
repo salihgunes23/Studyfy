@@ -55,7 +55,7 @@ export async function callGemini(opts: {
 
   let res: Response;
   try {
-    res = await fetch(url, {
+    res = await fetchWithRetry(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: payload,
@@ -70,7 +70,7 @@ export async function callGemini(opts: {
       throw new Error('API anahtarı geçersiz görünüyor. Ayarlardan tekrar kontrol et.');
     }
     if (res.status === 429) {
-      throw new Error('Yapay zeka şu an yoğun. Lütfen birkaç saniye sonra tekrar dene.');
+      throw new Error('Yapay zeka kısa süreli olarak çok istek aldı. Birkaç saniye sonra tekrar dene.');
     }
     if (res.status === 403) {
       throw new Error('Erişim reddedildi. Anahtarın doğru ve etkin olduğundan emin ol.');
@@ -99,6 +99,26 @@ function extractText(json: unknown): string {
     .map((p) => p.text ?? '')
     .filter(Boolean)
     .join('');
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * 429 (çok istek) ve 503 (geçici meşgul) durumlarında otomatik olarak bekleyip
+ * yeniden dener. Böylece kullanıcı "çok yoğun" hatasını çoğu zaman hiç görmez.
+ */
+async function fetchWithRetry(url: string, init: RequestInit, retries = 4): Promise<Response> {
+  let delay = 1200;
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, init);
+    if ((res.status !== 429 && res.status !== 503) || attempt >= retries) {
+      return res;
+    }
+    await sleep(delay);
+    delay = Math.round(delay * 1.8);
+  }
 }
 
 /** Modelin döndürdüğü JSON metnini güvenli biçimde ayrıştırır. */

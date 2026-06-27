@@ -292,9 +292,24 @@ export function StudyApp() {
             </div>
 
             <div className="mt-4 flex flex-wrap gap-2">
-              <ActionButton label="Nota Çevir" running={busy === 'notes'} onClick={() => genNotes(active)} />
-              <ActionButton label="Hızlı Özet" running={busy === 'summary'} onClick={() => genSummary(active)} />
-              <ActionButton label="Test Üret" running={busy === 'quiz'} onClick={() => genQuiz(active)} />
+              <ActionButton
+                label="Nota Çevir"
+                running={busy === 'notes'}
+                disabled={busy !== null}
+                onClick={() => genNotes(active)}
+              />
+              <ActionButton
+                label="Hızlı Özet"
+                running={busy === 'summary'}
+                disabled={busy !== null}
+                onClick={() => genSummary(active)}
+              />
+              <ActionButton
+                label="Test Üret"
+                running={busy === 'quiz'}
+                disabled={busy !== null}
+                onClick={() => genQuiz(active)}
+              />
             </div>
 
             <div className="mt-5 flex gap-1 overflow-x-auto border-b border-border">
@@ -331,6 +346,7 @@ export function StudyApp() {
                   action={() => genNotes(active)}
                   actionLabel="Nota Çevir"
                   running={busy === 'notes'}
+                  disabled={busy !== null}
                 >
                   {active.notes && <Markdown>{active.notes}</Markdown>}
                 </TabBody>
@@ -343,6 +359,7 @@ export function StudyApp() {
                   action={() => genSummary(active)}
                   actionLabel="Özet Çıkar"
                   running={busy === 'summary'}
+                  disabled={busy !== null}
                 >
                   {active.summary && <Markdown>{active.summary}</Markdown>}
                 </TabBody>
@@ -366,7 +383,7 @@ export function StudyApp() {
                     <button
                       type="button"
                       onClick={() => genQuiz(active)}
-                      disabled={busy === 'quiz'}
+                      disabled={busy !== null}
                       className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-accent-foreground disabled:opacity-50"
                     >
                       {busy === 'quiz' ? (
@@ -394,6 +411,7 @@ export function StudyApp() {
                   setInput={setChatInput}
                   onSend={() => sendChat(active)}
                   running={busy === 'chat'}
+                  disabled={busy !== null}
                 />
               )}
 
@@ -409,17 +427,19 @@ export function StudyApp() {
 function ActionButton({
   label,
   running,
+  disabled,
   onClick,
 }: {
   label: string;
   running: boolean;
+  disabled?: boolean;
   onClick: () => void;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      disabled={running}
+      disabled={running || disabled}
       className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium transition hover:border-accent/50 hover:bg-muted disabled:opacity-50"
     >
       {running ? (
@@ -438,6 +458,7 @@ function TabBody({
   action,
   actionLabel,
   running,
+  disabled,
   children,
 }: {
   empty: boolean;
@@ -445,6 +466,7 @@ function TabBody({
   action: () => void;
   actionLabel: string;
   running: boolean;
+  disabled?: boolean;
   children?: React.ReactNode;
 }) {
   if (empty) {
@@ -454,7 +476,7 @@ function TabBody({
         <button
           type="button"
           onClick={action}
-          disabled={running}
+          disabled={running || disabled}
           className="mt-4 inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-foreground disabled:opacity-50"
         >
           {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
@@ -472,12 +494,14 @@ function ChatPanel({
   setInput,
   onSend,
   running,
+  disabled,
 }: {
   doc: StudyDoc;
   input: string;
   setInput: (v: string) => void;
   onSend: () => void;
   running: boolean;
+  disabled?: boolean;
 }) {
   return (
     <div>
@@ -513,13 +537,14 @@ function ChatPanel({
           onKeyDown={(e) => {
             if (e.key === 'Enter') onSend();
           }}
+          disabled={disabled}
           placeholder="Sorunu yaz…"
-          className="flex-1 rounded-lg border border-border bg-background px-3 py-2.5 text-sm outline-none focus:border-accent"
+          className="flex-1 rounded-lg border border-border bg-background px-3 py-2.5 text-sm outline-none focus:border-accent disabled:opacity-50"
         />
         <button
           type="button"
           onClick={onSend}
-          disabled={running || !input.trim()}
+          disabled={disabled || !input.trim()}
           className="inline-flex items-center justify-center rounded-lg bg-accent px-4 text-accent-foreground disabled:opacity-50"
         >
           <Send className="h-4 w-4" />
