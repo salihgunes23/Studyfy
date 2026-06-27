@@ -4,31 +4,80 @@
 
 /*
  * Design token'ları — tam set ve gerekçeler docs/DESIGN_SYSTEM.md içindedir.
- * Dark mode varsayılan estetiktir; aşağıda light değerleri :root, dark .dark.
+ * Dark mode varsayılan estetiktir.
  */
 @layer base {
   :root {
     --background: 0 0% 100%;
     --foreground: 240 10% 4%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 4%;
     --muted: 240 5% 96%;
     --muted-foreground: 240 4% 46%;
     --border: 240 6% 90%;
-    --accent: 245 75% 60%;
+    --ring: 245 75% 60%;
+    --accent: 245 75% 58%;
     --accent-foreground: 0 0% 100%;
-    --radius: 0.625rem;
+    --radius: 0.75rem;
   }
 
   .dark {
     --background: 240 10% 4%;
     --foreground: 0 0% 98%;
-    --muted: 240 4% 12%;
+    --card: 240 6% 8%;
+    --card-foreground: 0 0% 98%;
+    --muted: 240 4% 14%;
     --muted-foreground: 240 5% 65%;
     --border: 240 4% 16%;
-    --accent: 245 75% 66%;
+    --ring: 245 80% 66%;
+    --accent: 245 80% 66%;
     --accent-foreground: 240 10% 4%;
   }
 
   * {
     border-color: hsl(var(--border));
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: hsl(var(--accent) / 0.25);
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    background: linear-gradient(120deg, hsl(245 80% 68%), hsl(280 80% 70%));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .bg-grid {
+    background-image:
+      linear-gradient(to right, hsl(var(--border) / 0.5) 1px, transparent 1px),
+      linear-gradient(to bottom, hsl(var(--border) / 0.5) 1px, transparent 1px);
+    background-size: 48px 48px;
+  }
+
+  .glow {
+    box-shadow: 0 0 80px -20px hsl(var(--accent) / 0.45);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
   }
 }
