@@ -36,13 +36,13 @@ type Tab = 'custom' | 'notes' | 'summary' | 'quiz' | 'cards' | 'chat' | 'source'
 
 const ACCEPT = 'image/*,application/pdf,.txt,.md,.csv';
 
-const YKS_PRESETS = [
-  'TYT formatında 10 soru üret',
-  'AYT zorluğunda 5 soru üret',
-  'Bu konunun YKS’de çıkma sıklığı ve önemi',
-  'Konuyu özetle + sık yapılan hatalar/tuzaklar',
+const QUICK_PRESETS = [
   'Kavram haritası çıkar',
-  'Soru çözüm taktikleri ve pratik yöntemler',
+  'Önemli tanımlar ve formüller',
+  'Konuyu basitçe, örneklerle anlat',
+  'Sık yapılan hatalar',
+  'Kronolojik / adım adım tablo',
+  '10 soruluk test üret',
 ];
 
 export function StudyApp() {
@@ -391,10 +391,10 @@ export function StudyApp() {
               {tab === 'custom' && (
                 <div>
                   <p className="text-sm text-muted-foreground">
-                    Bu belgeden ne istersen yaz; ya da hazır YKS komutlarından seç:
+                    Bu belgeden ne istersen yaz; ya da hazır komutlardan seç:
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {YKS_PRESETS.map((p) => (
+                    {QUICK_PRESETS.map((p) => (
                       <button
                         key={p}
                         type="button"
