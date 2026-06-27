@@ -1,0 +1,46 @@
+name: 🐛 Hata Bildirimi
+description: Bir hatayı bildir
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: "Hata bildirimin için teşekkürler. Lütfen aşağıdaki alanları doldur."
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: Ne oldu?
+      description: Beklenen ve gerçekleşen davranışı açıkla.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Yeniden üretme adımları
+      placeholder: |
+        1. '...' sayfasına git
+        2. '...' yükle
+        3. Hata görünür
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Etkilenen alan
+      options:
+        - web (arayüz)
+        - api (core)
+        - ai-service (RAG/LLM)
+        - ingestion (upload/OCR/STT)
+        - diğer
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Ortam
+      placeholder: "Tarayıcı, OS, sürüm, vb."
+  - type: textarea
+    id: logs
+    attributes:
+      label: Loglar / ekran görüntüsü
+      render: shell

@@ -1,0 +1,10 @@
+{
+  "name": "@studfy/config",
+  "version": "0.1.0",
+  "private": true,
+  "files": ["typescript", "eslint"],
+  "exports": {
+    "./typescript/base.json": "./typescript/base.json",
+    "./eslint": "./eslint/index.js"
+  }
+}

@@ -1,0 +1,33 @@
+name: ✨ Özellik Önerisi
+description: Yeni bir özellik veya iyileştirme öner
+labels: ["enhancement", "triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Hangi sorunu çözüyor?
+      description: Kullanıcı ihtiyacını / acı noktasını açıkla.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Önerilen çözüm
+    validations:
+      required: true
+  - type: dropdown
+    id: module
+    attributes:
+      label: İlgili modül
+      options:
+        - Multimodal yükleme
+        - Akıllı tasnif & semantik
+        - 3 katmanlı anlatım & TTS
+        - Test motoru
+        - Arama & global kütüphane
+        - Analitik & koç & flashcard
+        - Diğer
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatifler

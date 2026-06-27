@@ -1,0 +1,447 @@
+// =============================================================================
+// Studfy — Prisma Schema
+// AI-Native Learning OS — PostgreSQL + pgvector data model
+// -----------------------------------------------------------------------------
+// NOTE: pgvector (`vector`), `ltree`, `citext`, `pgcrypto` are PostgreSQL
+// extensions not natively typed by Prisma. They are mapped via:
+//   - @db.Citext for citext (needs previewFeature "postgresqlExtensions")
+//   - Unsupported("vector(1024)") for embeddings (HNSW indexes are created in
+//     raw SQL — see infra/db/migrations/0001_init.sql)
+//   - Unsupported("ltree") for folder materialized paths
+// Prisma cannot create indexes on Unsupported() columns; HNSW / GiST / GIN
+// indexes therefore live in the raw SQL migration. Keep both in sync.
+// =============================================================================
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector, ltree, pgcrypto, citext]
+}
+
+// =============================================================================
+// IDENTITY & TENANCY
+// =============================================================================
+
+/// End users. One row per authenticated identity.
+model User {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// citext → case-insensitive uniqueness for emails
+  email        String   @unique @db.Citext
+  displayName  String?  @map("display_name")
+  /// passkey | google | email
+  authProvider String?  @map("auth_provider")
+  /// Per-user envelope-encryption KMS key id (zero-knowledge data isolation)
+  kmsKeyId     String?  @map("kms_key_id")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspaces     Workspace[]
+  quizAttempts   QuizAttempt[]
+  analyticsEvents AnalyticsEvent[]
+  libraryItems   LibraryItem[]
+
+  @@map("users")
+}
+
+/// A user's isolated, encrypted data space. Tenancy boundary for RLS.
+model Workspace {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  name      String   @default("Çalışma Alanım")
+  settings  Json     @default("{}") @db.JsonB
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  folders      Folder[]
+  files        File[]
+  fileChunks   FileChunk[]
+  notes        Note[]
+  quizzes      Quiz[]
+  flashcards   Flashcard[]
+  chatSessions ChatSession[]
+
+  @@index([userId])
+  @@map("workspaces")
+}
+
+// =============================================================================
+// FOLDER TREE (auto-classification target)
+// =============================================================================
+
+/// Hierarchical folder tree. `path` is an ltree materialized path for fast
+/// subtree queries (descendants/ancestors) — GiST index created in raw SQL.
+model Folder {
+  id          String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String                  @map("workspace_id") @db.Uuid
+  parentId    String?                 @map("parent_id") @db.Uuid
+  name        String
+  aiGenerated Boolean                 @default(false) @map("ai_generated")
+  /// ltree materialized path, e.g. root.matematik.turev
+  path        Unsupported("ltree")?
+  createdAt   DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  parent    Folder?   @relation("FolderChildren", fields: [parentId], references: [id], onDelete: Cascade)
+  children  Folder[]  @relation("FolderChildren")
+  files     File[]
+  notes     Note[]
+
+  @@index([workspaceId])
+  @@index([parentId])
+  @@map("folders")
+}
+
+// =============================================================================
+// FILES (multimodal) + DERIVED ARTIFACTS
+// =============================================================================
+
+/// Uploaded source assets across all modalities. Drives the ingestion pipeline.
+model File {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId   String   @map("workspace_id") @db.Uuid
+  folderId      String?  @map("folder_id") @db.Uuid
+  originalName  String   @map("original_name")
+  mimeType      String   @map("mime_type")
+  /// document | image | handwriting | audio | video
+  modality      String
+  /// Encrypted object-storage key (R2/S3)
+  storageKey    String   @map("storage_key")
+  /// Content hash for duplicate detection
+  contentHash   String?  @map("content_hash")
+  sizeBytes     BigInt?  @map("size_bytes")
+  /// queued | extracting | embedding | ready | failed
+  status        String   @default("queued")
+  // --- AI classification output ---
+  detectedCourse     String? @map("detected_course")
+  detectedTopic      String? @map("detected_topic")
+  detectedSubtopic   String? @map("detected_subtopic")
+  classifyConfidence Float?  @map("classify_confidence") @db.Real
+  tags          String[]
+  language      String?
+  durationSec   Int?     @map("duration_sec")
+  pageCount     Int?     @map("page_count")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  folder    Folder?   @relation(fields: [folderId], references: [id], onDelete: SetNull)
+
+  chunks          FileChunk[]
+  transcripts     Transcript[]
+  derivedContents DerivedContent[]
+  flashcards      Flashcard[]
+  outgoingLinks   FileLink[]       @relation("SrcFile")
+  incomingLinks   FileLink[]       @relation("DstFile")
+
+  @@index([workspaceId])
+  @@index([folderId])
+  @@index([contentHash])
+  @@index([status])
+  @@map("files")
+}
+
+/// Normalized, chunked text units. The atomic RAG retrieval unit.
+/// `embedding` is a pgvector(1024) column; its HNSW (cosine) index is created
+/// in raw SQL because Prisma cannot index Unsupported() types.
+model FileChunk {
+  id          String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fileId      String                      @map("file_id") @db.Uuid
+  /// Denormalized from files.workspace_id → fast tenant filter without join
+  workspaceId String                      @map("workspace_id") @db.Uuid
+  chunkIndex  Int?                        @map("chunk_index")
+  content     String
+  /// Source locator for deep-linking: {page,paragraph} | {start_sec}
+  locator     Json?                       @db.JsonB
+  tokenCount  Int?                        @map("token_count")
+  /// pgvector embedding (1024-dim). HNSW cosine index in raw SQL.
+  embedding   Unsupported("vector(1024)")?
+  createdAt   DateTime                    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  file      File      @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  quizQuestions QuizQuestion[]
+
+  @@index([fileId])
+  @@index([workspaceId])
+  @@map("file_chunks")
+}
+
+/// Time-stamped transcript segments for audio/video.
+model Transcript {
+  id       String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fileId   String  @map("file_id") @db.Uuid
+  startSec Float?  @map("start_sec") @db.Real
+  endSec   Float?  @map("end_sec") @db.Real
+  speaker  String?
+  text     String?
+
+  file File @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@index([fileId])
+  @@map("transcripts")
+}
+
+/// Three-layer AI-derived explanations per file (one row per layer).
+model DerivedContent {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fileId    String   @map("file_id") @db.Uuid
+  /// quick_glance | academic | analogy
+  layer     String
+  format    String   @default("markdown")
+  content   String?
+  /// TTS audio object key (R2) for podcast mode
+  audioKey  String?  @map("audio_key")
+  modelUsed String?  @map("model_used")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  file File @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@unique([fileId, layer])
+  @@index([fileId])
+  @@map("derived_contents")
+}
+
+/// Semantic knowledge-graph edges between files.
+model FileLink {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  srcFile     String   @map("src_file") @db.Uuid
+  dstFile     String   @map("dst_file") @db.Uuid
+  /// supports | contradicts | extends | duplicate
+  relation    String?
+  score       Float?   @db.Real
+  aiSuggested Boolean  @default(true) @map("ai_suggested")
+  accepted    Boolean? @map("accepted")
+
+  src File @relation("SrcFile", fields: [srcFile], references: [id], onDelete: Cascade)
+  dst File @relation("DstFile", fields: [dstFile], references: [id], onDelete: Cascade)
+
+  @@index([srcFile])
+  @@index([dstFile])
+  @@map("file_links")
+}
+
+// =============================================================================
+// NOTES
+// =============================================================================
+
+/// Rich-text notes (Tiptap block JSON) with their own embedding for search.
+model Note {
+  id          String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String                      @map("workspace_id") @db.Uuid
+  folderId    String?                     @map("folder_id") @db.Uuid
+  title       String?
+  /// Tiptap document JSON
+  doc         Json?                       @db.JsonB
+  embedding   Unsupported("vector(1024)")?
+  createdAt   DateTime                    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime                    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  folder    Folder?   @relation(fields: [folderId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([folderId])
+  @@map("notes")
+}
+
+// =============================================================================
+// QUIZ ENGINE (zero-hallucination, grounded)
+// =============================================================================
+
+model Quiz {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId   String   @map("workspace_id") @db.Uuid
+  title         String?
+  /// Source files the quiz was generated from
+  sourceFileIds String[] @map("source_file_ids") @db.Uuid
+  /// practice | exam
+  mode          String?
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  questions QuizQuestion[]
+
+  @@index([workspaceId])
+  @@map("quizzes")
+}
+
+model QuizQuestion {
+  id            String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  quizId        String  @map("quiz_id") @db.Uuid
+  /// mcq | true_false | fill_blank | match | open
+  type          String?
+  stem          String?
+  options       Json?   @db.JsonB
+  answer        Json?   @db.JsonB
+  explanation   String?
+  /// MANDATORY grounding: the chunk this question is derived from
+  sourceChunkId String? @map("source_chunk_id") @db.Uuid
+  sourceLocator Json?   @map("source_locator") @db.JsonB
+  difficulty    Float?  @db.Real
+  topic         String?
+  /// Verifier-LLM approval flag
+  verified      Boolean @default(false)
+
+  quiz        Quiz       @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  sourceChunk FileChunk? @relation(fields: [sourceChunkId], references: [id], onDelete: SetNull)
+  attempts    QuizAttempt[]
+
+  @@index([quizId])
+  @@index([sourceChunkId])
+  @@map("quiz_questions")
+}
+
+model QuizAttempt {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  questionId  String   @map("question_id") @db.Uuid
+  userId      String?  @map("user_id") @db.Uuid
+  givenAnswer Json?    @map("given_answer") @db.JsonB
+  isCorrect   Boolean? @map("is_correct")
+  timeSpentMs Int?     @map("time_spent_ms")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  question QuizQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  user     User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([questionId])
+  @@index([userId])
+  @@map("quiz_attempts")
+}
+
+// =============================================================================
+// SPACED REPETITION (FSRS)
+// =============================================================================
+
+model Flashcard {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String    @map("workspace_id") @db.Uuid
+  fileId      String?   @map("file_id") @db.Uuid
+  front       String?
+  back        String?
+  cloze       String?
+  // --- FSRS scheduler state ---
+  stability   Float?    @db.Real
+  difficulty  Float?    @db.Real
+  dueAt       DateTime? @map("due_at") @db.Timestamptz(6)
+  /// new | learning | review | relearning
+  state       String    @default("new")
+  reps        Int       @default(0)
+  lapses      Int       @default(0)
+
+  workspace  Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  file       File?       @relation(fields: [fileId], references: [id], onDelete: SetNull)
+  reviewLogs ReviewLog[]
+
+  @@index([workspaceId])
+  @@index([fileId])
+  @@index([dueAt])
+  @@map("flashcards")
+}
+
+model ReviewLog {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cardId     String   @map("card_id") @db.Uuid
+  /// 1 again | 2 hard | 3 good | 4 easy
+  rating     Int      @db.SmallInt
+  reviewedAt DateTime @default(now()) @map("reviewed_at") @db.Timestamptz(6)
+
+  card Flashcard @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@index([cardId])
+  @@map("review_logs")
+}
+
+// =============================================================================
+// CHAT / ASSISTANT (strict RAG, cited)
+// =============================================================================
+
+model ChatSession {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  /// Retrieval scope: {file_ids} | {folder_id} | {all:true}
+  scope       Json?    @db.JsonB
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  messages  ChatMessage[]
+
+  @@index([workspaceId])
+  @@map("chat_sessions")
+}
+
+model ChatMessage {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionId String   @map("session_id") @db.Uuid
+  /// user | assistant | system
+  role      String?
+  content   String?
+  /// [{chunk_id, locator}] — mandatory source attribution
+  citations Json?    @db.JsonB
+  tokens    Int?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  session ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("chat_messages")
+}
+
+// =============================================================================
+// ANALYTICS (high-volume, time-partitioned in raw SQL)
+// =============================================================================
+
+/// Append-only event stream. Partitioned by created_at (RANGE) in raw SQL.
+/// bigserial PK because volume far exceeds uuid-friendly tables.
+model AnalyticsEvent {
+  id          BigInt   @id @default(autoincrement())
+  userId      String?  @map("user_id") @db.Uuid
+  workspaceId String?  @map("workspace_id") @db.Uuid
+  eventType   String?  @map("event_type")
+  topic       String?
+  payload     Json?    @db.JsonB
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([workspaceId])
+  @@index([eventType])
+  @@index([createdAt])
+  @@map("analytics_events")
+}
+
+// =============================================================================
+// GLOBAL LIBRARY (community-shared, opt-in)
+// =============================================================================
+
+/// Publicly shareable learning artifacts. Not tenant-isolated (global read).
+model LibraryItem {
+  id               String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  authorUserId     String?                     @map("author_user_id") @db.Uuid
+  anonymous        Boolean                     @default(false)
+  title            String?
+  description      String?
+  content          String?
+  course           String?
+  topic            String?
+  tags             String[]
+  embedding        Unsupported("vector(1024)")?
+  license          String?
+  upvotes          Int                         @default(0)
+  importCount      Int                         @default(0) @map("import_count")
+  /// pending | approved | rejected
+  moderationStatus String                      @default("pending") @map("moderation_status")
+  createdAt        DateTime                    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  author User? @relation(fields: [authorUserId], references: [id], onDelete: SetNull)
+
+  @@index([authorUserId])
+  @@index([course])
+  @@index([moderationStatus])
+  @@map("library_items")
+}

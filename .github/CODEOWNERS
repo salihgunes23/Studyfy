@@ -1,0 +1,11 @@
+# Studfy kod sahipleri — bu yollardaki değişiklikler ilgili ekipten review ister.
+# Gerçek GitHub kullanıcı/takım adlarıyla güncelle.
+
+*                       @studfy/maintainers
+/apps/web/              @studfy/frontend
+/apps/api/              @studfy/backend
+/services/ai/           @studfy/ai
+/infra/                 @studfy/platform
+/docs/                  @studfy/maintainers
+/docs/SECURITY.md       @studfy/security
+/SECURITY.md            @studfy/security

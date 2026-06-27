@@ -1,0 +1,26 @@
+# Tüm metin dosyalarını normalize et; depoda LF tut.
+* text=auto eol=lf
+
+# Açıkça LF gerektirenler
+*.ts   text eol=lf
+*.tsx  text eol=lf
+*.js   text eol=lf
+*.mjs  text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.py   text eol=lf
+*.sql  text eol=lf
+*.css  text eol=lf
+*.sh   text eol=lf
+Makefile text eol=lf
+Dockerfile text eol=lf
+
+# İkili dosyalar
+*.png  binary
+*.jpg  binary
+*.webp binary
+*.ico  binary
+*.pdf  binary
+*.woff2 binary
