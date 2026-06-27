@@ -7,9 +7,19 @@ export interface QuizQuestion {
   explanation: string;
 }
 
+export interface Flashcard {
+  front: string;
+  back: string;
+}
+
 export interface ChatTurn {
   role: 'user' | 'ai';
   content: string;
+}
+
+export interface CustomResult {
+  request: string;
+  result: string;
 }
 
 export interface StudyDoc {
@@ -23,5 +33,7 @@ export interface StudyDoc {
   notes?: string;
   summary?: string;
   questions?: QuizQuestion[];
+  flashcards?: Flashcard[];
+  custom?: CustomResult;
   chat: ChatTurn[];
 }

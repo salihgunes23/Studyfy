@@ -15,15 +15,23 @@ import { useEffect, useRef, useState } from 'react';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { ApiKeyDialog } from '@/components/app/api-key-dialog';
 import { Markdown } from '@/components/app/markdown';
+import { FlashcardView } from '@/components/app/flashcard-view';
 import { QuizView } from '@/components/app/quiz-view';
 import { cn } from '@/lib/cn';
 import { deleteDoc, getAllDocs, putDoc } from '@/lib/db';
 import { newId, readFile } from '@/lib/file';
 import { API_KEY_STORAGE, callGemini, HAS_PROXY, parseJsonLoose, type GeminiFile } from '@/lib/gemini';
-import { CHAT_PROMPT, NOTES_PROMPT, questionsPrompt, SUMMARY_PROMPT } from '@/lib/prompts';
-import type { QuizQuestion, StudyDoc } from '@/lib/types';
+import {
+  CHAT_PROMPT,
+  customPrompt,
+  flashcardsPrompt,
+  NOTES_PROMPT,
+  questionsPrompt,
+  SUMMARY_PROMPT,
+} from '@/lib/prompts';
+import type { Flashcard, QuizQuestion, StudyDoc } from '@/lib/types';
 
-type Tab = 'source' | 'notes' | 'summary' | 'quiz' | 'chat';
+type Tab = 'custom' | 'notes' | 'summary' | 'quiz' | 'cards' | 'chat' | 'source';
 
 const ACCEPT = 'image/*,application/pdf,.txt,.md,.csv';
 
@@ -37,6 +45,8 @@ export function StudyApp() {
   const [error, setError] = useState<string | null>(null);
   const [chatInput, setChatInput] = useState('');
   const [count, setCount] = useState(5);
+  const [cardCount, setCardCount] = useState(8);
+  const [customReq, setCustomReq] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -158,6 +168,34 @@ export function StudyApp() {
         throw new Error('Soru üretilemedi, tekrar dene.');
       }
       await persist({ ...doc, questions: parsed.questions });
+    });
+  }
+
+  async function genFlashcards(doc: StudyDoc) {
+    if (!requireKey()) return;
+    setTab('cards');
+    await run('cards', async () => {
+      const out = await callGemini({
+        apiKey,
+        prompt: flashcardsPrompt(cardCount),
+        temperature: 0.5,
+        ...fileArg(doc),
+      });
+      const parsed = parseJsonLoose<{ cards: Flashcard[] }>(out);
+      if (!parsed.cards || parsed.cards.length === 0) {
+        throw new Error('Kart üretilemedi, tekrar dene.');
+      }
+      await persist({ ...doc, flashcards: parsed.cards });
+    });
+  }
+
+  async function runCustom(doc: StudyDoc) {
+    const request = customReq.trim();
+    if (!request) return;
+    if (!requireKey()) return;
+    await run('custom', async () => {
+      const out = await callGemini({ apiKey, prompt: customPrompt(request), ...fileArg(doc) });
+      await persist({ ...doc, custom: { request, result: out } });
     });
   }
 
@@ -310,14 +348,22 @@ export function StudyApp() {
                 disabled={busy !== null}
                 onClick={() => genQuiz(active)}
               />
+              <ActionButton
+                label="Flash Kart"
+                running={busy === 'cards'}
+                disabled={busy !== null}
+                onClick={() => genFlashcards(active)}
+              />
             </div>
 
             <div className="mt-5 flex gap-1 overflow-x-auto border-b border-border">
               {(
                 [
+                  ['custom', '✨ İstediğini Yaptır'],
                   ['notes', 'Notlar'],
                   ['summary', 'Özet'],
                   ['quiz', 'Test'],
+                  ['cards', 'Kartlar'],
                   ['chat', 'Soru Sor'],
                   ['source', 'Kaynak'],
                 ] as Array<[Tab, string]>
@@ -339,6 +385,48 @@ export function StudyApp() {
             </div>
 
             <div className="mt-5">
+              {tab === 'custom' && (
+                <div>
+                  <p className="text-sm text-muted-foreground">
+                    Bu belgeden ne istersen yaz: kavram haritası, kronolojik tablo, mülakat
+                    simülasyonu, sınav stratejisi, karşılaştırma tablosu…
+                  </p>
+                  <div className="mt-3 flex gap-2">
+                    <input
+                      value={customReq}
+                      onChange={(e) => setCustomReq(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') runCustom(active);
+                      }}
+                      disabled={busy !== null}
+                      placeholder="Örn: Bu konunun kavram haritasını çıkar"
+                      className="flex-1 rounded-lg border border-border bg-background px-3 py-2.5 text-sm outline-none focus:border-accent disabled:opacity-50"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => runCustom(active)}
+                      disabled={busy !== null || !customReq.trim()}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-accent-foreground disabled:opacity-50"
+                    >
+                      {busy === 'custom' ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Sparkles className="h-4 w-4" />
+                      )}
+                      Yaptır
+                    </button>
+                  </div>
+                  {active.custom && (
+                    <div className="mt-6">
+                      <p className="mb-2 text-xs text-muted-foreground">
+                        İstek: “{active.custom.request}”
+                      </p>
+                      <Markdown>{active.custom.result}</Markdown>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {tab === 'notes' && (
                 <TabBody
                   empty={!active.notes}
@@ -400,6 +488,43 @@ export function StudyApp() {
                     <p className="text-sm text-muted-foreground">
                       Henüz test yok. Yukarıdan üret.
                     </p>
+                  )}
+                </div>
+              )}
+
+              {tab === 'cards' && (
+                <div>
+                  <div className="mb-4 flex items-center gap-2 text-sm">
+                    <span className="text-muted-foreground">Kart sayısı:</span>
+                    <select
+                      value={cardCount}
+                      onChange={(e) => setCardCount(Number(e.target.value))}
+                      className="rounded-lg border border-border bg-background px-2 py-1"
+                    >
+                      {[5, 8, 12, 20].map((n) => (
+                        <option key={n} value={n}>
+                          {n}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => genFlashcards(active)}
+                      disabled={busy !== null}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-accent-foreground disabled:opacity-50"
+                    >
+                      {busy === 'cards' ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Sparkles className="h-3.5 w-3.5" />
+                      )}
+                      {active.flashcards ? 'Yeniden üret' : 'Kart Üret'}
+                    </button>
+                  </div>
+                  {active.flashcards ? (
+                    <FlashcardView cards={active.flashcards} />
+                  ) : (
+                    <p className="text-sm text-muted-foreground">Henüz kart yok. Yukarıdan üret.</p>
                   )}
                 </div>
               )}
