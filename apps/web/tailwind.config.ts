@@ -1,4 +1,5 @@
 import type { Config } from 'tailwindcss';
+import typography from '@tailwindcss/typography';
 
 /** Tam token seti: docs/DESIGN_SYSTEM.md. Renkler CSS değişkenlerine bağlıdır. */
 const config: Config = {
@@ -43,7 +44,7 @@ const config: Config = {
       },
     },
   },
-  plugins: [],
+  plugins: [typography],
 };
 
 export default config;

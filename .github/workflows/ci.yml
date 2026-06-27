@@ -1,8 +1,8 @@
 name: CI
 
+# Not: Site yayını ayrı bir workflow'dadır (deploy-pages.yml).
+# Tam monorepo CI'sı yalnızca PR'larda çalışır (push'ta gürültü olmasın).
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
 
