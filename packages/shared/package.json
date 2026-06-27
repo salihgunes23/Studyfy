@@ -18,7 +18,7 @@
   },
   "devDependencies": {
     "@studfy/config": "workspace:*",
-    "typescript": "^5.6.2",
-    "vitest": "^2.1.0"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
   }
 }
