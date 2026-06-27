@@ -20,7 +20,7 @@ import { QuizView } from '@/components/app/quiz-view';
 import { cn } from '@/lib/cn';
 import { deleteDoc, getAllDocs, putDoc } from '@/lib/db';
 import { newId, readFile } from '@/lib/file';
-import { ask } from '@/lib/ai';
+import { ask, askStream } from '@/lib/ai';
 import { API_KEY_STORAGE, parseJsonLoose, type GeminiFile } from '@/lib/gemini';
 import {
   CHAT_PROMPT,
@@ -36,6 +36,15 @@ type Tab = 'custom' | 'notes' | 'summary' | 'quiz' | 'cards' | 'chat' | 'source'
 
 const ACCEPT = 'image/*,application/pdf,.txt,.md,.csv';
 
+const YKS_PRESETS = [
+  'TYT formatında 10 soru üret',
+  'AYT zorluğunda 5 soru üret',
+  'Bu konunun YKS’de çıkma sıklığı ve önemi',
+  'Konuyu özetle + sık yapılan hatalar/tuzaklar',
+  'Kavram haritası çıkar',
+  'Soru çözüm taktikleri ve pratik yöntemler',
+];
+
 export function StudyApp() {
   const [docs, setDocs] = useState<StudyDoc[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -48,6 +57,7 @@ export function StudyApp() {
   const [count, setCount] = useState(5);
   const [cardCount, setCardCount] = useState(8);
   const [customReq, setCustomReq] = useState('');
+  const [stream, setStream] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -135,18 +145,22 @@ export function StudyApp() {
   async function genNotes(doc: StudyDoc) {
     if (!requireKey()) return;
     setTab('notes');
+    setStream('');
     await run('notes', async () => {
-      const out = await ask({ prompt: NOTES_PROMPT, ...fileArg(doc) }, apiKey);
+      const out = await askStream({ prompt: NOTES_PROMPT, ...fileArg(doc) }, apiKey, setStream);
       await persist({ ...doc, notes: out });
+      setStream('');
     });
   }
 
   async function genSummary(doc: StudyDoc) {
     if (!requireKey()) return;
     setTab('summary');
+    setStream('');
     await run('summary', async () => {
-      const out = await ask({ prompt: SUMMARY_PROMPT, ...fileArg(doc) }, apiKey);
+      const out = await askStream({ prompt: SUMMARY_PROMPT, ...fileArg(doc) }, apiKey, setStream);
       await persist({ ...doc, summary: out });
+      setStream('');
     });
   }
 
@@ -186,9 +200,15 @@ export function StudyApp() {
     const request = customReq.trim();
     if (!request) return;
     if (!requireKey()) return;
+    setStream('');
     await run('custom', async () => {
-      const out = await ask({ prompt: customPrompt(request), ...fileArg(doc) }, apiKey);
+      const out = await askStream(
+        { prompt: customPrompt(request), ...fileArg(doc) },
+        apiKey,
+        setStream,
+      );
       await persist({ ...doc, custom: { request, result: out } });
+      setStream('');
     });
   }
 
@@ -197,14 +217,17 @@ export function StudyApp() {
     if (!q) return;
     if (!requireKey()) return;
     setChatInput('');
+    setStream('');
     const withUser: StudyDoc = { ...doc, chat: [...doc.chat, { role: 'user', content: q }] };
     await persist(withUser);
     await run('chat', async () => {
-      const out = await ask(
+      const out = await askStream(
         { prompt: `${CHAT_PROMPT}\n\nÖĞRENCİNİN SORUSU: ${q}`, ...fileArg(doc) },
         apiKey,
+        setStream,
       );
       await persist({ ...withUser, chat: [...withUser.chat, { role: 'ai', content: out }] });
+      setStream('');
     });
   }
 
@@ -368,9 +391,21 @@ export function StudyApp() {
               {tab === 'custom' && (
                 <div>
                   <p className="text-sm text-muted-foreground">
-                    Bu belgeden ne istersen yaz: kavram haritası, kronolojik tablo, mülakat
-                    simülasyonu, sınav stratejisi, karşılaştırma tablosu…
+                    Bu belgeden ne istersen yaz; ya da hazır YKS komutlarından seç:
                   </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {YKS_PRESETS.map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => setCustomReq(p)}
+                        disabled={busy !== null}
+                        className="rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground transition hover:border-accent/50 hover:text-foreground disabled:opacity-50"
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </div>
                   <div className="mt-3 flex gap-2">
                     <input
                       value={customReq}
@@ -396,42 +431,54 @@ export function StudyApp() {
                       Yaptır
                     </button>
                   </div>
-                  {active.custom && (
+                  {busy === 'custom' && stream ? (
                     <div className="mt-6">
-                      <p className="mb-2 text-xs text-muted-foreground">
-                        İstek: “{active.custom.request}”
-                      </p>
-                      <Markdown>{active.custom.result}</Markdown>
+                      <StreamingView text={stream} />
                     </div>
+                  ) : (
+                    active.custom && (
+                      <div className="mt-6">
+                        <p className="mb-2 text-xs text-muted-foreground">
+                          İstek: “{active.custom.request}”
+                        </p>
+                        <Markdown>{active.custom.result}</Markdown>
+                      </div>
+                    )
                   )}
                 </div>
               )}
 
-              {tab === 'notes' && (
-                <TabBody
-                  empty={!active.notes}
-                  emptyLabel="Bu belgeyi düzenli notlara çevir."
-                  action={() => genNotes(active)}
-                  actionLabel="Nota Çevir"
-                  running={busy === 'notes'}
-                  disabled={busy !== null}
-                >
-                  {active.notes && <Markdown>{active.notes}</Markdown>}
-                </TabBody>
-              )}
+              {tab === 'notes' &&
+                (busy === 'notes' && stream ? (
+                  <StreamingView text={stream} />
+                ) : (
+                  <TabBody
+                    empty={!active.notes}
+                    emptyLabel="Bu belgeyi düzenli notlara çevir."
+                    action={() => genNotes(active)}
+                    actionLabel="Nota Çevir"
+                    running={busy === 'notes'}
+                    disabled={busy !== null}
+                  >
+                    {active.notes && <Markdown>{active.notes}</Markdown>}
+                  </TabBody>
+                ))}
 
-              {tab === 'summary' && (
-                <TabBody
-                  empty={!active.summary}
-                  emptyLabel="Sınav öncesi hızlı özet çıkar."
-                  action={() => genSummary(active)}
-                  actionLabel="Özet Çıkar"
-                  running={busy === 'summary'}
-                  disabled={busy !== null}
-                >
-                  {active.summary && <Markdown>{active.summary}</Markdown>}
-                </TabBody>
-              )}
+              {tab === 'summary' &&
+                (busy === 'summary' && stream ? (
+                  <StreamingView text={stream} />
+                ) : (
+                  <TabBody
+                    empty={!active.summary}
+                    emptyLabel="Sınav öncesi hızlı özet çıkar."
+                    action={() => genSummary(active)}
+                    actionLabel="Özet Çıkar"
+                    running={busy === 'summary'}
+                    disabled={busy !== null}
+                  >
+                    {active.summary && <Markdown>{active.summary}</Markdown>}
+                  </TabBody>
+                ))}
 
               {tab === 'quiz' && (
                 <div>
@@ -516,6 +563,7 @@ export function StudyApp() {
                   setInput={setChatInput}
                   onSend={() => sendChat(active)}
                   running={busy === 'chat'}
+                  streaming={stream}
                   disabled={busy !== null}
                 />
               )}
@@ -599,6 +647,7 @@ function ChatPanel({
   setInput,
   onSend,
   running,
+  streaming,
   disabled,
 }: {
   doc: StudyDoc;
@@ -606,6 +655,7 @@ function ChatPanel({
   setInput: (v: string) => void;
   onSend: () => void;
   running: boolean;
+  streaming: string;
   disabled?: boolean;
 }) {
   return (
@@ -629,11 +679,15 @@ function ChatPanel({
             {t.role === 'ai' ? <Markdown>{t.content}</Markdown> : t.content}
           </div>
         ))}
-        {running && (
+        {running && streaming ? (
+          <div className="max-w-[85%] rounded-xl border border-border bg-card px-3 py-2 text-sm">
+            <Markdown>{streaming}</Markdown>
+          </div>
+        ) : running ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" /> Yazıyor…
           </div>
-        )}
+        ) : null}
       </div>
       <div className="mt-4 flex gap-2">
         <input
@@ -655,6 +709,15 @@ function ChatPanel({
           <Send className="h-4 w-4" />
         </button>
       </div>
+    </div>
+  );
+}
+
+function StreamingView({ text }: { text: string }) {
+  return (
+    <div>
+      <Markdown>{text}</Markdown>
+      <span className="mt-1 inline-block h-4 w-2 animate-pulse rounded-sm bg-accent align-middle" />
     </div>
   );
 }

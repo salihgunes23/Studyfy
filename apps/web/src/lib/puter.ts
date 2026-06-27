@@ -59,6 +59,45 @@ export async function callPuter(opts: AskInput): Promise<string> {
   return text;
 }
 
+/** Akışlı (streaming) yanıt — token'lar geldikçe onToken(biriken metin) çağrılır. */
+export async function callPuterStream(
+  opts: AskInput,
+  onToken: (full: string) => void,
+): Promise<string> {
+  const puter = await ensurePuter();
+
+  let prompt = opts.prompt;
+  if (opts.text) {
+    prompt += '\n\n--- BELGE İÇERİĞİ ---\n' + opts.text;
+  }
+
+  let resp: any;
+  if (opts.file) {
+    if (opts.file.mimeType === 'application/pdf') {
+      throw new Error(
+        'PDF bu motorda okunamıyor. Görsel/metin kullan ya da sağ üstten Google anahtarı bağla.',
+      );
+    }
+    const dataUrl = `data:${opts.file.mimeType};base64,${opts.file.base64}`;
+    resp = await puter.ai.chat(prompt, dataUrl, false, { model: MODEL, stream: true });
+  } else {
+    resp = await puter.ai.chat(prompt, { model: MODEL, stream: true });
+  }
+
+  let full = '';
+  for await (const part of resp) {
+    const t = typeof part === 'string' ? part : (part?.text ?? '');
+    if (t) {
+      full += t;
+      onToken(full);
+    }
+  }
+  if (!full.trim()) {
+    throw new Error('Yapay zeka boş yanıt döndü. Tekrar dener misin?');
+  }
+  return full;
+}
+
 function extractText(resp: any): string {
   if (typeof resp === 'string') return resp;
   const content = resp?.message?.content;

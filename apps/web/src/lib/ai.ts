@@ -4,7 +4,7 @@
  * bağladıysa Gemini'ye düşer.
  */
 import { callGemini, HAS_PROXY } from './gemini';
-import { type AskInput, callPuter } from './puter';
+import { type AskInput, callPuter, callPuterStream } from './puter';
 
 export type { AskInput };
 
@@ -16,5 +16,23 @@ export async function ask(opts: AskInput, apiKey: string): Promise<string> {
       return await callGemini({ apiKey, ...opts });
     }
     throw err instanceof Error ? err : new Error('Yapay zeka şu an yanıt veremedi.');
+  }
+}
+
+/**
+ * Akışlı çağrı: Puter streaming'i dener (token'lar canlı akar). Akış olmazsa
+ * normal yanıta düşer ve sonucu tek seferde verir.
+ */
+export async function askStream(
+  opts: AskInput,
+  apiKey: string,
+  onToken: (full: string) => void,
+): Promise<string> {
+  try {
+    return await callPuterStream(opts, onToken);
+  } catch {
+    const full = await ask(opts, apiKey);
+    onToken(full);
+    return full;
   }
 }
