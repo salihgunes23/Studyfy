@@ -20,7 +20,8 @@ import { QuizView } from '@/components/app/quiz-view';
 import { cn } from '@/lib/cn';
 import { deleteDoc, getAllDocs, putDoc } from '@/lib/db';
 import { newId, readFile } from '@/lib/file';
-import { API_KEY_STORAGE, callGemini, HAS_PROXY, parseJsonLoose, type GeminiFile } from '@/lib/gemini';
+import { ask } from '@/lib/ai';
+import { API_KEY_STORAGE, parseJsonLoose, type GeminiFile } from '@/lib/gemini';
 import {
   CHAT_PROMPT,
   customPrompt,
@@ -115,11 +116,7 @@ export function StudyApp() {
   }
 
   function requireKey(): boolean {
-    if (HAS_PROXY) return true;
-    if (!apiKey) {
-      setShowKey(true);
-      return false;
-    }
+    // Anahtarsız Puter motoru var; AI her zaman hazır.
     return true;
   }
 
@@ -139,7 +136,7 @@ export function StudyApp() {
     if (!requireKey()) return;
     setTab('notes');
     await run('notes', async () => {
-      const out = await callGemini({ apiKey, prompt: NOTES_PROMPT, ...fileArg(doc) });
+      const out = await ask({ prompt: NOTES_PROMPT, ...fileArg(doc) }, apiKey);
       await persist({ ...doc, notes: out });
     });
   }
@@ -148,7 +145,7 @@ export function StudyApp() {
     if (!requireKey()) return;
     setTab('summary');
     await run('summary', async () => {
-      const out = await callGemini({ apiKey, prompt: SUMMARY_PROMPT, ...fileArg(doc) });
+      const out = await ask({ prompt: SUMMARY_PROMPT, ...fileArg(doc) }, apiKey);
       await persist({ ...doc, summary: out });
     });
   }
@@ -157,12 +154,10 @@ export function StudyApp() {
     if (!requireKey()) return;
     setTab('quiz');
     await run('quiz', async () => {
-      const out = await callGemini({
+      const out = await ask(
+        { prompt: questionsPrompt(count), temperature: 0.6, ...fileArg(doc) },
         apiKey,
-        prompt: questionsPrompt(count),
-        temperature: 0.6,
-        ...fileArg(doc),
-      });
+      );
       const parsed = parseJsonLoose<{ questions: QuizQuestion[] }>(out);
       if (!parsed.questions || parsed.questions.length === 0) {
         throw new Error('Soru üretilemedi, tekrar dene.');
@@ -175,12 +170,10 @@ export function StudyApp() {
     if (!requireKey()) return;
     setTab('cards');
     await run('cards', async () => {
-      const out = await callGemini({
+      const out = await ask(
+        { prompt: flashcardsPrompt(cardCount), temperature: 0.5, ...fileArg(doc) },
         apiKey,
-        prompt: flashcardsPrompt(cardCount),
-        temperature: 0.5,
-        ...fileArg(doc),
-      });
+      );
       const parsed = parseJsonLoose<{ cards: Flashcard[] }>(out);
       if (!parsed.cards || parsed.cards.length === 0) {
         throw new Error('Kart üretilemedi, tekrar dene.');
@@ -194,7 +187,7 @@ export function StudyApp() {
     if (!request) return;
     if (!requireKey()) return;
     await run('custom', async () => {
-      const out = await callGemini({ apiKey, prompt: customPrompt(request), ...fileArg(doc) });
+      const out = await ask({ prompt: customPrompt(request), ...fileArg(doc) }, apiKey);
       await persist({ ...doc, custom: { request, result: out } });
     });
   }
@@ -207,11 +200,10 @@ export function StudyApp() {
     const withUser: StudyDoc = { ...doc, chat: [...doc.chat, { role: 'user', content: q }] };
     await persist(withUser);
     await run('chat', async () => {
-      const out = await callGemini({
+      const out = await ask(
+        { prompt: `${CHAT_PROMPT}\n\nÖĞRENCİNİN SORUSU: ${q}`, ...fileArg(doc) },
         apiKey,
-        prompt: `${CHAT_PROMPT}\n\nÖĞRENCİNİN SORUSU: ${q}`,
-        ...fileArg(doc),
-      });
+      );
       await persist({ ...withUser, chat: [...withUser.chat, { role: 'ai', content: out }] });
     });
   }
@@ -243,22 +235,14 @@ export function StudyApp() {
             <span className="text-lg tracking-tight">Studfy</span>
           </Link>
           <div className="flex items-center gap-2">
-            {HAS_PROXY ? (
-              <span className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground">
-                <span className="h-2 w-2 rounded-full bg-green-500" /> Yapay zeka hazır
-              </span>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setShowKey(true)}
-                className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground transition hover:bg-muted"
-              >
-                <span
-                  className={cn('h-2 w-2 rounded-full', apiKey ? 'bg-green-500' : 'bg-amber-500')}
-                />
-                {apiKey ? 'Yapay zeka bağlı' : 'Yapay zekayı bağla'}
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => setShowKey(true)}
+              title="Gelişmiş: kendi Google anahtarını bağla (isteğe bağlı)"
+              className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground transition hover:bg-muted"
+            >
+              <span className="h-2 w-2 rounded-full bg-green-500" /> Yapay zeka hazır
+            </button>
             <ThemeToggle />
           </div>
         </div>
@@ -311,11 +295,7 @@ export function StudyApp() {
         )}
 
         {!active ? (
-          <EmptyState
-            onAdd={() => fileRef.current?.click()}
-            hasKey={HAS_PROXY || !!apiKey}
-            onKey={() => setShowKey(true)}
-          />
+          <EmptyState onAdd={() => fileRef.current?.click()} hasKey onKey={() => setShowKey(true)} />
         ) : (
           <section className="mt-6">
             <div className="flex items-center justify-between gap-3">
