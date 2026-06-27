@@ -10,6 +10,7 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react';
+import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { ApiKeyDialog } from '@/components/app/api-key-dialog';
@@ -18,7 +19,7 @@ import { QuizView } from '@/components/app/quiz-view';
 import { cn } from '@/lib/cn';
 import { deleteDoc, getAllDocs, putDoc } from '@/lib/db';
 import { newId, readFile } from '@/lib/file';
-import { API_KEY_STORAGE, callGemini, parseJsonLoose, type GeminiFile } from '@/lib/gemini';
+import { API_KEY_STORAGE, callGemini, HAS_PROXY, parseJsonLoose, type GeminiFile } from '@/lib/gemini';
 import { CHAT_PROMPT, NOTES_PROMPT, questionsPrompt, SUMMARY_PROMPT } from '@/lib/prompts';
 import type { QuizQuestion, StudyDoc } from '@/lib/types';
 
@@ -104,6 +105,7 @@ export function StudyApp() {
   }
 
   function requireKey(): boolean {
+    if (HAS_PROXY) return true;
     if (!apiKey) {
       setShowKey(true);
       return false;
@@ -196,23 +198,29 @@ export function StudyApp() {
 
       <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
-          <div className="flex items-center gap-2 font-semibold">
+          <Link href="/" className="flex items-center gap-2 font-semibold">
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-accent-foreground">
               <GraduationCap className="h-5 w-5" />
             </span>
             <span className="text-lg tracking-tight">Studfy</span>
-          </div>
+          </Link>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setShowKey(true)}
-              className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground transition hover:bg-muted"
-            >
-              <span
-                className={cn('h-2 w-2 rounded-full', apiKey ? 'bg-green-500' : 'bg-amber-500')}
-              />
-              {apiKey ? 'Yapay zeka bağlı' : 'Yapay zekayı bağla'}
-            </button>
+            {HAS_PROXY ? (
+              <span className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground">
+                <span className="h-2 w-2 rounded-full bg-green-500" /> Yapay zeka hazır
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowKey(true)}
+                className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground transition hover:bg-muted"
+              >
+                <span
+                  className={cn('h-2 w-2 rounded-full', apiKey ? 'bg-green-500' : 'bg-amber-500')}
+                />
+                {apiKey ? 'Yapay zeka bağlı' : 'Yapay zekayı bağla'}
+              </button>
+            )}
             <ThemeToggle />
           </div>
         </div>
@@ -265,7 +273,11 @@ export function StudyApp() {
         )}
 
         {!active ? (
-          <EmptyState onAdd={() => fileRef.current?.click()} hasKey={!!apiKey} onKey={() => setShowKey(true)} />
+          <EmptyState
+            onAdd={() => fileRef.current?.click()}
+            hasKey={HAS_PROXY || !!apiKey}
+            onKey={() => setShowKey(true)}
+          />
         ) : (
           <section className="mt-6">
             <div className="flex items-center justify-between gap-3">

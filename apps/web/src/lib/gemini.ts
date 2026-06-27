@@ -8,6 +8,14 @@ export const GEMINI_MODEL = 'gemini-2.0-flash';
 export const API_KEY_STORAGE = 'studfy_gemini_key';
 export const API_KEY_URL = 'https://aistudio.google.com/app/apikey';
 
+/**
+ * Opsiyonel "geçiş sunucusu" (proxy) adresi. Tanımlıysa istekler anahtarsız
+ * olarak bu sunucuya gider; anahtar sunucuda gizli tutulur (herkese açık dahili AI).
+ * Tanımlı değilse kullanıcı kendi ücretsiz anahtarını girer (BYOK).
+ */
+export const AI_PROXY = process.env.NEXT_PUBLIC_AI_PROXY ?? '';
+export const HAS_PROXY = AI_PROXY.length > 0;
+
 export interface GeminiFile {
   mimeType: string;
   base64: string;
@@ -33,19 +41,24 @@ export async function callGemini(opts: {
     parts.push({ inline_data: { mime_type: opts.file.mimeType, data: opts.file.base64 } });
   }
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(
-    opts.apiKey,
-  )}`;
+  const payload = JSON.stringify({
+    contents: [{ parts }],
+    generationConfig: { temperature: opts.temperature ?? 0.4 },
+  });
+
+  // Proxy varsa anahtarsız ona git; yoksa doğrudan Google'a (kullanıcının anahtarıyla).
+  const url = HAS_PROXY
+    ? AI_PROXY
+    : `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(
+        opts.apiKey,
+      )}`;
 
   let res: Response;
   try {
     res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts }],
-        generationConfig: { temperature: opts.temperature ?? 0.4 },
-      }),
+      body: payload,
     });
   } catch {
     throw new Error('İnternet bağlantısı yok ya da istek engellendi.');
@@ -57,7 +70,7 @@ export async function callGemini(opts: {
       throw new Error('API anahtarı geçersiz görünüyor. Ayarlardan tekrar kontrol et.');
     }
     if (res.status === 429) {
-      throw new Error('Ücretsiz kullanım sınırına ulaşıldı. Birkaç dakika sonra tekrar dene.');
+      throw new Error('Yapay zeka şu an yoğun. Lütfen birkaç saniye sonra tekrar dene.');
     }
     if (res.status === 403) {
       throw new Error('Erişim reddedildi. Anahtarın doğru ve etkin olduğundan emin ol.');
